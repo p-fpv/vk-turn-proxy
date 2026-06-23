@@ -451,23 +451,29 @@ func ParseVkCaptchaError(errData map[string]interface{}) *VkCaptchaError {
 		return nil
 	}
 
-	// Extract captcha_sid
+	// Extract captcha_sid — try direct field first, then from redirect_uri
 	captchaSid, ok := errData["captcha_sid"].(string)
 	if !ok {
 		// try numeric
 		if sidNum, ok2 := errData["captcha_sid"].(float64); ok2 {
 			captchaSid = fmt.Sprintf("%.0f", sidNum)
-		} else {
-			log.Printf("missing captcha_sid in captcha error data")
-			return nil
+		} else if RedirectURI != "" {
+			// fallback: extract from redirect_uri (new VK format)
+			if parsed, err := neturl.Parse(RedirectURI); err == nil {
+				captchaSid = parsed.Query().Get("captcha_sid")
+			}
+		}
+		if captchaSid == "" {
+			captchaSid = "0" // VK will accept any sid with proper flow
+			log.Printf("[Captcha] Using fallback captcha_sid=0 (new VK format)")
 		}
 	}
 
-	// Extract captcha_img
+	// Extract captcha_img — may be missing in new VK format
 	captchaImg, ok := errData["captcha_img"].(string)
 	if !ok {
-		log.Printf("missing captcha_img in captcha error data")
-		return nil
+		// new VK format doesn't include captcha_img
+		captchaImg = ""
 	}
 
 	// Extract error_msg
@@ -500,20 +506,32 @@ func ParseVkCaptchaError(errData map[string]interface{}) *VkCaptchaError {
 		isSound = false
 	}
 
-	// Extract captcha_ts
+	// Extract captcha_ts — try direct field, then from redirect_uri
 	var captchaTs string
 	if tsFloat, ok := errData["captcha_ts"].(float64); ok {
 		captchaTs = fmt.Sprintf("%.0f", tsFloat)
 	} else if tsStr, ok := errData["captcha_ts"].(string); ok {
 		captchaTs = tsStr
 	}
+	if captchaTs == "" && RedirectURI != "" {
+		if parsed, err := neturl.Parse(RedirectURI); err == nil {
+			captchaTs = parsed.Query().Get("captcha_ts")
+		}
+	}
+	if captchaTs == "" {
+		captchaTs = fmt.Sprintf("%d", time.Now().Unix())
+		log.Printf("[Captcha] Using generated captcha_ts")
+	}
 
-	// Extract captcha_attempt
+	// Extract captcha_attempt — try direct field, then default
 	var captchaAttempt string
 	if attFloat, ok := errData["captcha_attempt"].(float64); ok {
 		captchaAttempt = fmt.Sprintf("%.0f", attFloat)
 	} else if attStr, ok := errData["captcha_attempt"].(string); ok {
 		captchaAttempt = attStr
+	}
+	if captchaAttempt == "" {
+		captchaAttempt = "1"
 	}
 
 	// Build VkCaptchaError
